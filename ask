@@ -152,6 +152,8 @@ if [ "$STREAMING" = true ]; then
     curl -sS "$API_URL" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+      -H "HTTP-Referer: https://github.com/kagisearch/ask/" \
+      -H "X-Title: Kagi ask" \
       -d "$JSON_PAYLOAD" 2>&1 | while IFS= read -r line; do
         # Check for errors
         if echo "$line" | grep -q '"error"'; then
@@ -179,6 +181,8 @@ else
     response=$(curl -sS "$API_URL" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+      -H "HTTP-Referer: https://github.com/kagisearch/ask/" \
+      -H "X-Title: Kagi ask" \
       -d "$JSON_PAYLOAD" 2>&1)
 
     # Check for errors
