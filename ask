@@ -29,6 +29,7 @@ PROMPT=""
 STREAMING=false
 NO_SYSTEM=false
 PROVIDER_ORDER=""
+EXECUTE=false
 
 # Default system prompt (direct answers)
 DEFAULT_PROMPT="You are a direct answer engine. Output ONLY the requested information.
@@ -60,6 +61,7 @@ Options:
   -q          Use qwen/qwen3-235b-a22b-2507
   -m MODEL    Use custom model
   -r          Disable system prompt (raw model behavior)
+  -x          Enable interactive execution (prompt y/n to execute)
   --stream    Enable streaming output
   --system    Set system prompt for the conversation
   --provider  Comma-separated list of providers for routing
@@ -69,6 +71,7 @@ Examples:
   ask "Write a hello world in Python"
   ask -g "Explain quantum computing"
   ask -m openai/gpt-4o "What is 2+2?"
+  ask -x "Create a backup of my home directory"
   echo "Fix this code" | ask
   ask --system "You are a pirate" "Tell me about sailing"
 
@@ -88,6 +91,9 @@ while [ $# -gt 0 ]; do
             shift 2 ;;
         -r)
             NO_SYSTEM=true
+            shift ;;
+        -x)
+            EXECUTE=true
             shift ;;
         --stream)
             STREAMING=true
@@ -148,7 +154,8 @@ echo
 
 # Make API request
 if [ "$STREAMING" = true ]; then
-    # Streaming mode
+    # Streaming mode - use temp file to capture content for execution
+    temp_file=$(mktemp)
     curl -sS "$API_URL" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $OPENROUTER_API_KEY" \
@@ -165,10 +172,17 @@ if [ "$STREAMING" = true ]; then
             [ "$json" = "" ] || [ "$json" = "[DONE]" ] && continue
 
             content=$(echo "$json" | jq -r '.choices[0].delta.content // ""' 2>/dev/null)
-            [ -n "$content" ] && printf '%s' "$content"
+            if [ -n "$content" ]; then
+                printf '%s' "$content"
+                printf '%s' "$content" >> "$temp_file"
+            fi
         fi
     done
     echo
+    
+    # Read captured content for potential execution
+    response_content=$(cat "$temp_file")
+    rm -f "$temp_file"
 
     # Show metadata
     ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
@@ -188,7 +202,8 @@ else
     fi
 
     # Extract and print content
-    echo "$response" | jq -r '.choices[0].message.content // "No response received"'
+    response_content=$(echo "$response" | jq -r '.choices[0].message.content // "No response received"')
+    echo "$response_content"
 
     # Show metadata
     ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
@@ -198,4 +213,26 @@ else
 
     echo
     echo "[$MODEL via $PROVIDER - ${ELAPSED}s - ${TPS} tok/s]" >&2
+fi
+
+# Interactive execution if enabled
+if [ "$EXECUTE" = true ]; then
+    echo >&2
+    echo -n "Execute this command? (y/n): " >&2
+    read -r answer
+    case "$answer" in
+        [Yy]|[Yy][Ee][Ss])
+            echo "Executing..." >&2
+            echo
+            # Execute the command using captured response content
+            if [ -n "$response_content" ]; then
+                eval "$response_content"
+            else
+                echo "Error: No command to execute" >&2
+            fi
+            ;;
+        *)
+            echo "Command not executed." >&2
+            ;;
+    esac
 fi
