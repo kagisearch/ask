@@ -142,6 +142,10 @@ ask "List all Python files" | ask "Generate a script to check syntax of these fi
 # Use with other tools
 docker ps -a | ask "Which containers are using the most memory?"
 
+# Use custom LLM server (e.g., local llama.cpp/Ollama)
+export LLM_SERVER_URL="http://localhost:11434"
+ask -m "llama3.2:3b" "Explain quantum computing"
+
 ```
 
 ## Requirements
