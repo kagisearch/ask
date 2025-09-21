@@ -5,11 +5,6 @@
 
 set -euo pipefail
 
-# Check for API key
-if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    echo "Error: OPENROUTER_API_KEY environment variable is not set" >&2
-    exit 1
-fi
 
 # Model shortcuts function
 get_model() {
@@ -29,6 +24,7 @@ PROMPT=""
 STREAMING=false
 NO_SYSTEM=false
 PROVIDER_ORDER=""
+LLM_SERVER_URL="${LLM_SERVER_URL:-https://openrouter.ai/api}"
 
 # Default system prompt (direct answers)
 DEFAULT_PROMPT="You are a direct answer engine. Output ONLY the requested information.
@@ -114,6 +110,13 @@ if [ -z "$PROMPT" ]; then
     PROMPT=$(cat)
 fi
 
+
+# Check for API key (only required for OpenRouter)
+if [[ "$LLM_SERVER_URL" == *"openrouter.ai"* ]] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    echo "Error: OPENROUTER_API_KEY environment variable is not set" >&2
+    exit 1
+fi
+
 # Apply default system prompt unless disabled or custom prompt provided
 if [ "$NO_SYSTEM" = false ] && [ -z "$SYSTEM_PROMPT" ]; then
     SYSTEM_PROMPT="$DEFAULT_PROMPT"
@@ -141,7 +144,8 @@ JSON_PAYLOAD='{
     "stream": '$([ "$STREAMING" = true ] && echo true || echo false)"$PROVIDER_JSON"'
 }'
 
-API_URL="https://openrouter.ai/api/v1/chat/completions"
+# Set API URL
+API_URL="${LLM_SERVER_URL}/v1/chat/completions"
 
 # Add newline before answer
 echo
@@ -197,5 +201,9 @@ else
     TPS=$(echo "scale=1; $TOKENS / $ELAPSED" | bc 2>/dev/null || echo "0.0")
 
     echo
-    echo "[$MODEL via $PROVIDER - ${ELAPSED}s - ${TPS} tok/s]" >&2
+    if [[ "$LLM_SERVER_URL" == *"openrouter.ai"* ]]; then
+        echo "[$MODEL via $PROVIDER - ${ELAPSED}s - ${TPS} tok/s]" >&2
+    else
+        echo "[$LLM_SERVER_URL - ${ELAPSED}s - ${TPS} tok/s]" >&2
+    fi
 fi
