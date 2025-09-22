@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # install.sh - Install ask CLI tool system-wide
 
