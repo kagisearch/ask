@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # ask - Simple OpenRouter API CLI tool
 # Usage: ask [OPTIONS] [PROMPT]
