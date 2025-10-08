@@ -15,8 +15,9 @@ fi
 get_model() {
     case "$1" in
         c) echo "inception/mercury-coder:nitro" ;;
-        g) echo "google/gemini-2.5-flash:nitro" ;;
-        s) echo "anthropic/claude-sonnet-4:nitro" ;;
+        g) echo "google/gemini-2.5-flash-preview-09-2025:nitro" ;;
+        s) echo "anthropic/claude-sonnet-4.5:nitro" ;;
+        x) echo "x-ai/grok-code-fast-1:nitro" ;;
         k) echo "moonshotai/kimi-k2:nitro" ;;
         q) echo "qwen/qwen3-235b-a22b-2507:nitro" ;;
     esac
@@ -54,8 +55,9 @@ Usage: ask [OPTIONS] [PROMPT]
 
 Options:
   -c          Use inception/mercury-coder (default)
-  -g          Use google/gemini-2.5-flash
-  -s          Use anthropic/claude-sonnet-4
+  -g          Use google/gemini-2.5-flash-preview-09-2025
+  -s          Use anthropic/claude-sonnet-4.5
+  -x          Use x-ai/grok-code-fast-1
   -k          Use moonshotai/kimi-k2
   -q          Use qwen/qwen3-235b-a22b-2507
   -m MODEL    Use custom model
@@ -80,7 +82,7 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help) show_help ;;
-        -[cgskq])
+        -[cgskqx])
             MODEL="$(get_model "${1:1}")"
             shift ;;
         -m)
