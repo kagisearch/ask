@@ -6,55 +6,39 @@ A lightweight bash script for querying AI models via the OpenRouter API, optimiz
 
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/ask.git
+git clone https://github.com/kagisearch/ask.git
 cd ask
-chmod +x ask
 
-# Set your API key
+chmod +x ask
+sudo cp ask /usr/local/bin/
+
+
+# Make sure you have you OpenRouter API key
 export OPENROUTER_API_KEY="your-api-key-here"
 
 # Test it
-./ask remove lines in file1 that appear in file2
+> ask remove lines in file1 that appear in file2
 
 grep -vFf file2 file1 > file3 && mv file3 file1
 
-[inception/mercury-coder via Inception - 0.86s - 20.9 tok/s]
+[inception/mercury-coder via Inception - 0.66s - 20.9 tok/s]
 ```
 
-## Installation
-
-### Option 1: Using install.sh 
-```bash
-sudo ./install.sh
-```
-
-### Option 2: Manual installation
-```bash
-chmod +x ask
-sudo cp ask /usr/local/bin/
-```
-
-### Persistent API key setup
-
-Add to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.):
-```bash
-export OPENROUTER_API_KEY="your-api-key-here"
-```
+We also provide a handy install script.
 
 ## Usage
 
 ### Basic usage
 
 ```bash
-ask "What is 2+2?"
-ask "Write a Python hello world"
+ask ffmpeg command to convert mp4 to gif
 ```
 
 ### Model selection
 
 ```bash
 # Default model (Mercury Coder - optimized for code)
-ask "Write a Python function"
+ask find files larger than 20mb
 
 # Shorthand flags for quick model switching
 ask -c "prompt"  # Mercury Coder (default, best for code)
@@ -171,27 +155,6 @@ docker ps -a | ask "Which containers are using the most memory?"
 ### API access
 - OpenRouter API key (get one at [openrouter.ai](https://openrouter.ai))
 - Set as environment variable: `OPENROUTER_API_KEY`
-
-### Missing dependencies
-```bash
-# Check for required tools
-which curl jq bc
-
-# Install on macOS
-brew install jq bc
-
-# Install on Ubuntu/Debian
-sudo apt-get install jq bc
-```
-
-### No response or errors
-```bash
-# Test with verbose curl output
-curl -v https://openrouter.ai/api/v1/chat/completions \
-  -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"google/gemini-2.5-flash","messages":[{"role":"user","content":"test"}]}'
-```
 
 ## License
 
