@@ -20,11 +20,12 @@ get_model() {
         x) echo "x-ai/grok-code-fast-1:nitro" ;;
         k) echo "moonshotai/kimi-k2:nitro" ;;
         q) echo "qwen/qwen3-235b-a22b-2507:nitro" ;;
+        o) echo "openai/gpt-5:nitro" ;;
     esac
 }
 
 # Default values
-MODEL="inception/mercury-coder:nitro"
+MODEL="qwen/qwen3-235b-a22b-2507:nitro"
 SYSTEM_PROMPT=""
 PROMPT=""
 STREAMING=false
@@ -54,12 +55,13 @@ ask - Query AI models via OpenRouter API
 Usage: ask [OPTIONS] [PROMPT]
 
 Options:
-  -c          Use inception/mercury-coder (default)
+  -c          Use inception/mercury-coder
   -g          Use google/gemini-2.5-flash-preview-09-2025
   -s          Use anthropic/claude-sonnet-4.5
   -x          Use x-ai/grok-code-fast-1
   -k          Use moonshotai/kimi-k2
-  -q          Use qwen/qwen3-235b-a22b-2507
+  -q          Use qwen/qwen3-235b-a22b-2507 (default)
+  -o          Use openai/gpt-5
   -m MODEL    Use custom model
   -r          Disable system prompt (raw model behavior)
   --stream    Enable streaming output
@@ -82,7 +84,7 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help) show_help ;;
-        -[cgskqx])
+        -[cgskqxo])
             MODEL="$(get_model "${1:1}")"
             shift ;;
         -m)
