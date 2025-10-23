@@ -27,7 +27,7 @@ get_model() {
 }
 
 # Default values
-MODEL="GLM-4.5-air"
+MODEL="qwen/qwen3-235b-a22b-2507:nitro"
 SYSTEM_PROMPT=""
 PROMPT=""
 STREAMING=false
@@ -62,9 +62,9 @@ Options:
   -s          Use anthropic/claude-sonnet-4.5
   -x          Use x-ai/grok-code-fast-1
   -k          Use moonshotai/kimi-k2
-  -q          Use qwen/qwen3-235b-a22b-2507
+  -q          Use qwen/qwen3-235b-a22b-2507 (default)
   -o          Use openai/gpt-5
-  -a          Use GLM-4.5-air (default)
+  -a          Use GLM-4.5-air
   -z          Use GLM-4.6
   -m MODEL    Use custom model
   -r          Disable system prompt (raw model behavior)
