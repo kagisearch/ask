@@ -66,8 +66,6 @@ Options:
   -o          Use openai/gpt-5
   -a          Use GLM-4.5-air (default)
   -z          Use GLM-4.6
-  -a          Use GLM-4.5-air (default)
-  -z          Use GLM-4.6
   -m MODEL    Use custom model
   -r          Disable system prompt (raw model behavior)
   --stream    Enable streaming output
