@@ -21,6 +21,8 @@ get_model() {
         k) echo "moonshotai/kimi-k2:nitro" ;;
         q) echo "qwen/qwen3-235b-a22b-2507:nitro" ;;
         o) echo "openai/gpt-5:nitro" ;;
+        a) echo "GLM-4.5-air" ;;
+        z) echo "GLM-4.6" ;;
     esac
 }
 
@@ -62,6 +64,8 @@ Options:
   -k          Use moonshotai/kimi-k2
   -q          Use qwen/qwen3-235b-a22b-2507 (default)
   -o          Use openai/gpt-5
+  -a          Use GLM-4.5-air
+  -z          Use GLM-4.6
   -m MODEL    Use custom model
   -r          Disable system prompt (raw model behavior)
   --stream    Enable streaming output
@@ -84,7 +88,7 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help) show_help ;;
-        -[cgskqxo])
+        -[cgskqxoaz])
             MODEL="$(get_model "${1:1}")"
             shift ;;
         -m)
@@ -145,7 +149,12 @@ JSON_PAYLOAD='{
     "stream": '$([ "$STREAMING" = true ] && echo true || echo false)"$PROVIDER_JSON"'
 }'
 
-API_URL="https://openrouter.ai/api/v1/chat/completions"
+# Use Z.AI if configured, otherwise OpenRouter
+if [ -n "${ZAI_BASE_URL:-}" ]; then
+    API_URL="${ZAI_BASE_URL%/}/chat/completions"
+else
+    API_URL="https://openrouter.ai/api/v1/chat/completions"
+fi
 
 # Add newline before answer
 echo
