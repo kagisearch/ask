@@ -18,7 +18,7 @@ get_model() {
         g) echo "google/gemini-2.5-flash-preview-09-2025:nitro" ;;
         s) echo "anthropic/claude-sonnet-4.5:nitro" ;;
         x) echo "x-ai/grok-code-fast-1:nitro" ;;
-        k) echo "moonshotai/kimi-k2:nitro" ;;
+        k) echo "moonshotai/kimi-k2-0905:nitro" ;;
         q) echo "qwen/qwen3-235b-a22b-2507:nitro" ;;
         o) echo "openai/gpt-5:nitro" ;;
     esac
