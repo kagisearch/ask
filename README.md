@@ -86,6 +86,14 @@ echo "Fix this code: print('hello world)" | ask
 cat script.py | ask "Review this code"
 ```
 
+### Interactive execution mode
+
+```bash
+# Show the AI response, then prompt:
+# Execute this command? (y/n): 
+ask -x "list all files in current directory"
+```
+
 ## Options
 
 | Option | Description |
@@ -99,6 +107,7 @@ cat script.py | ask "Review this code"
 | `-r` | Disable system prompt |
 | `--stream` | Enable streaming output |
 | `--system` | Set custom system prompt |
+| `-x` | Enable Interactive execution |
 | `--provider` | Set provider order (comma-separated) |
 | `-h, --help` | Show help message |
 
