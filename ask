@@ -1,36 +1,37 @@
 #!/usr/bin/env bash
 
-# ask - Simple OpenRouter API CLI tool
+# ask - Simple Claude Code CLI wrapper
 # Usage: ask [OPTIONS] [PROMPT]
 
 set -euo pipefail
 
-# Check for API key
-if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    echo "Error: OPENROUTER_API_KEY environment variable is not set" >&2
+# Check for Claude CLI
+if ! command -v claude &> /dev/null; then
+    echo "Error: claude command not found. Install Claude Code CLI first." >&2
+    echo "Visit: https://claude.com/claude-code" >&2
     exit 1
 fi
 
 # Model shortcuts function
 get_model() {
     case "$1" in
-        c) echo "inception/mercury-coder:nitro" ;;
-        g) echo "google/gemini-2.5-flash-preview-09-2025:nitro" ;;
-        s) echo "anthropic/claude-sonnet-4.5:nitro" ;;
-        x) echo "x-ai/grok-code-fast-1:nitro" ;;
-        k) echo "moonshotai/kimi-k2:nitro" ;;
-        q) echo "qwen/qwen3-235b-a22b-2507:nitro" ;;
-        o) echo "openai/gpt-5:nitro" ;;
+        s) echo "sonnet" ;;
+        o) echo "opus" ;;
+        h) echo "haiku" ;;
     esac
 }
 
+# System information caching
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/ask"
+CACHE_FILE="$CACHE_DIR/sysinfo"
+CACHE_MAX_AGE=86400  # 24 hours in seconds
+
 # Default values
-MODEL="qwen/qwen3-235b-a22b-2507:nitro"
+MODEL="sonnet"
 SYSTEM_PROMPT=""
 PROMPT=""
-STREAMING=false
 NO_SYSTEM=false
-PROVIDER_ORDER=""
+DEBUG=false
 
 # Default system prompt (direct answers)
 DEFAULT_PROMPT="You are a direct answer engine. Output ONLY the requested information.
@@ -50,41 +51,171 @@ Rules:
 # Function to show help
 show_help() {
     cat << EOF
-ask - Query AI models via OpenRouter API
+ask - Query Claude AI via Claude Code CLI
 
 Usage: ask [OPTIONS] [PROMPT]
 
 Options:
-  -c          Use inception/mercury-coder
-  -g          Use google/gemini-2.5-flash-preview-09-2025
-  -s          Use anthropic/claude-sonnet-4.5
-  -x          Use x-ai/grok-code-fast-1
-  -k          Use moonshotai/kimi-k2
-  -q          Use qwen/qwen3-235b-a22b-2507 (default)
-  -o          Use openai/gpt-5
-  -m MODEL    Use custom model
+  -s          Use Claude Sonnet (default)
+  -o          Use Claude Opus
+  -h          Use Claude Haiku
+  -m MODEL    Use custom Claude model
   -r          Disable system prompt (raw model behavior)
-  --stream    Enable streaming output
-  --system    Set system prompt for the conversation
-  --provider  Comma-separated list of providers for routing
-  -h, --help  Show this help message
+  --system    Set custom system prompt for the conversation
+  --debug     Show system context, prompts, and command (output to stderr)
+  --help      Show this help message
 
 Examples:
   ask "Write a hello world in Python"
-  ask -g "Explain quantum computing"
-  ask -m openai/gpt-4o "What is 2+2?"
+  ask -o "Explain quantum computing"
+  ask -h "What is 2+2?"
   echo "Fix this code" | ask
   ask --system "You are a pirate" "Tell me about sailing"
+  ask -r "Tell me a joke"
+  ask --debug "Show me debug output"
 
 EOF
     exit 0
 }
 
+# Gather system information
+gather_sysinfo() {
+    # OS and Distribution
+    local os_info=$(grep -E '^(NAME|VERSION_ID)=' /etc/os-release 2>/dev/null | \
+                    cut -d= -f2 | tr -d '"' | paste -sd ' ' 2>/dev/null || \
+                    echo "$(uname -s) $(uname -r)")
+
+    # Architecture
+    local arch=$(uname -m)
+
+    # Package Manager
+    local pkg_mgr="unknown"
+    for pm in apt dnf yum pacman nix brew; do
+        if command -v "$pm" >/dev/null 2>&1; then
+            pkg_mgr="$pm"
+            break
+        fi
+    done
+
+    # Shell
+    local shell_name=$(basename "$SHELL" 2>/dev/null || echo "bash")
+
+    # Development Tools
+    local tools=""
+    for tool in python3 node npm docker git make gcc nix pip cargo go java rustc; do
+        command -v "$tool" >/dev/null 2>&1 && tools="${tools}${tool},"
+    done
+    tools=${tools%,}  # Remove trailing comma
+
+    # Working Directory
+    local wd=$(pwd)
+
+    # Git Repository
+    local in_git="no"
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 && in_git="yes"
+
+    # Project Type
+    local proj_type="none"
+    if [ -f package.json ]; then proj_type="node"
+    elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then proj_type="python"
+    elif [ -f Cargo.toml ]; then proj_type="rust"
+    elif [ -f go.mod ]; then proj_type="go"
+    elif [ -f pom.xml ] || [ -f build.gradle ]; then proj_type="java"
+    elif [ -f Makefile ]; then proj_type="make"
+    fi
+
+    # Format output (one line per item for easy parsing)
+    cat << EOF
+OS=$os_info
+ARCH=$arch
+PKG=$pkg_mgr
+SHELL=$shell_name
+TOOLS=$tools
+WD=$wd
+GIT=$in_git
+PROJECT=$proj_type
+EOF
+}
+
+# Check if cache should be refreshed
+should_refresh_cache() {
+    [ ! -f "$CACHE_FILE" ] && return 0
+
+    # Try to get file modification time
+    local cache_mtime
+    if cache_mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null); then
+        : # GNU stat worked
+    elif cache_mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null); then
+        : # BSD stat worked
+    else
+        return 0  # Can't determine age, refresh
+    fi
+
+    local now=$(date +%s)
+    local age=$((now - cache_mtime))
+
+    [ "$age" -gt "$CACHE_MAX_AGE" ] && return 0
+    return 1
+}
+
+# Get system context (cached)
+get_system_context() {
+    # Create cache directory if needed
+    if [ ! -d "$CACHE_DIR" ]; then
+        mkdir -p "$CACHE_DIR" 2>/dev/null || {
+            # Fallback to temp
+            CACHE_DIR="/tmp/ask-${USER:-default}"
+            CACHE_FILE="$CACHE_DIR/sysinfo"
+            mkdir -p "$CACHE_DIR" 2>/dev/null || return 1
+        }
+    fi
+
+    # Refresh cache if needed
+    if should_refresh_cache; then
+        gather_sysinfo > "$CACHE_FILE" 2>/dev/null || return 1
+    fi
+
+    # Read and format cache
+    if [ -f "$CACHE_FILE" ]; then
+        # Parse cache file
+        local os_info arch pkg_mgr shell_name tools wd in_git proj_type
+
+        while IFS='=' read -r key value; do
+            case "$key" in
+                OS) os_info="$value" ;;
+                ARCH) arch="$value" ;;
+                PKG) pkg_mgr="$value" ;;
+                SHELL) shell_name="$value" ;;
+                TOOLS) tools="$value" ;;
+                WD) wd="$value" ;;
+                GIT) in_git="$value" ;;
+                PROJECT) proj_type="$value" ;;
+            esac
+        done < "$CACHE_FILE"
+
+        # Format concise context
+        local context="System: $os_info $arch | Shell: $shell_name | Pkg: $pkg_mgr"
+        [ -n "$tools" ] && context="$context
+Tools: $tools"
+
+        local ctx_detail="Context: $wd"
+        [ "$in_git" = "yes" ] && ctx_detail="$ctx_detail | Git repo"
+        [ "$proj_type" != "none" ] && ctx_detail="$ctx_detail | ${proj_type} project"
+        context="$context
+$ctx_detail"
+
+        echo "$context"
+    fi
+}
+
 # Parse command line arguments
 while [ $# -gt 0 ]; do
     case "$1" in
-        -h|--help) show_help ;;
-        -[cgskqxo])
+        --help) show_help ;;
+        --debug)
+            DEBUG=true
+            shift ;;
+        -[soh])
             MODEL="$(get_model "${1:1}")"
             shift ;;
         -m)
@@ -93,14 +224,8 @@ while [ $# -gt 0 ]; do
         -r)
             NO_SYSTEM=true
             shift ;;
-        --stream)
-            STREAMING=true
-            shift ;;
         --system)
             SYSTEM_PROMPT="${2:?Error: --system requires a prompt}"
-            shift 2 ;;
-        --provider)
-            PROVIDER_ORDER="${2:?Error: --provider requires providers}"
             shift 2 ;;
         *)
             PROMPT="$*"
@@ -118,88 +243,106 @@ if [ -z "$PROMPT" ]; then
     PROMPT=$(cat)
 fi
 
+# Gather system context (unless in raw mode)
+SYSTEM_CONTEXT=""
+if [ "$NO_SYSTEM" = false ]; then
+    SYSTEM_CONTEXT=$(get_system_context)
+fi
+
 # Apply default system prompt unless disabled or custom prompt provided
 if [ "$NO_SYSTEM" = false ] && [ -z "$SYSTEM_PROMPT" ]; then
     SYSTEM_PROMPT="$DEFAULT_PROMPT"
 fi
 
-# Build messages array with proper JSON escaping
-if [ -n "$SYSTEM_PROMPT" ]; then
-    MESSAGES='[{"role":"system","content":'"$(printf '%s' "$SYSTEM_PROMPT" | jq -Rs .)"'},{"role":"user","content":'"$(printf '%s' "$PROMPT" | jq -Rs .)"'}]'
-else
-    MESSAGES='[{"role":"user","content":'"$(printf '%s' "$PROMPT" | jq -Rs .)"'}]'
+# Prepend system context to system prompt
+if [ -n "$SYSTEM_CONTEXT" ] && [ -n "$SYSTEM_PROMPT" ]; then
+    SYSTEM_PROMPT="${SYSTEM_CONTEXT}
+
+${SYSTEM_PROMPT}"
 fi
 
 # Record start time
 START_TIME=$(date +%s.%N)
 
-# Build JSON payload once
-PROVIDER_JSON=""
-if [ -n "$PROVIDER_ORDER" ]; then
-    PROVIDER_JSON=',"provider":{"order":['$(echo "$PROVIDER_ORDER" | awk -F, '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF?",":"")}')']}'
+# Debug output
+if [ "$DEBUG" = true ]; then
+    echo "=== SYSTEM CONTEXT ===" >&2
+    if [ -n "$SYSTEM_CONTEXT" ]; then
+        echo "$SYSTEM_CONTEXT" >&2
+    else
+        echo "(none)" >&2
+    fi
+    echo >&2
+
+    echo "=== SYSTEM PROMPT ===" >&2
+    if [ -n "$SYSTEM_PROMPT" ]; then
+        echo "$SYSTEM_PROMPT" >&2
+    else
+        echo "(none)" >&2
+    fi
+    echo >&2
+
+    echo "=== USER PROMPT ===" >&2
+    echo "$PROMPT" >&2
+    echo >&2
+
+    # Build debug command string
+    debug_cmd="claude -p \"<PROMPT>\" --model \"$MODEL\""
+    [ -n "$SYSTEM_PROMPT" ] && debug_cmd="$debug_cmd --system-prompt \"<SYSTEM_PROMPT>\""
+    debug_cmd="$debug_cmd --output-format json"
+
+    echo "=== CLAUDE COMMAND ===" >&2
+    echo "$debug_cmd" >&2
+    echo >&2
 fi
-
-JSON_PAYLOAD='{
-    "model": "'"$MODEL"'",
-    "messages": '"$MESSAGES"',
-    "stream": '$([ "$STREAMING" = true ] && echo true || echo false)"$PROVIDER_JSON"'
-}'
-
-API_URL="https://openrouter.ai/api/v1/chat/completions"
 
 # Add newline before answer
 echo
 
-# Make API request
-if [ "$STREAMING" = true ]; then
-    # Streaming mode
-    curl -sS "$API_URL" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-      -d "$JSON_PAYLOAD" 2>&1 | while IFS= read -r line; do
-        # Check for errors
-        if echo "$line" | grep -q '"error"'; then
-            echo "Error: $(echo "$line" | jq -r '.error.message // .error // "Unknown error"')" >&2
-            exit 1
-        fi
-
-        # Process SSE data lines
-        if [[ "$line" == data:* ]]; then
-            json="${line#data: }"
-            [ "$json" = "" ] || [ "$json" = "[DONE]" ] && continue
-
-            content=$(echo "$json" | jq -r '.choices[0].delta.content // ""' 2>/dev/null)
-            [ -n "$content" ] && printf '%s' "$content"
-        fi
-    done
-    echo
-
-    # Show metadata
-    ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
-    echo
-    echo "[$MODEL - ${ELAPSED}s]" >&2
+# Execute Claude CLI with proper argument passing
+if [ -n "$SYSTEM_PROMPT" ]; then
+    # With custom system prompt
+    response=$(claude -p "$PROMPT" --model "$MODEL" --system-prompt "$SYSTEM_PROMPT" --output-format json 2>&1)
 else
-    # Non-streaming mode
-    response=$(curl -sS "$API_URL" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-      -d "$JSON_PAYLOAD" 2>&1)
+    # Without system prompt (raw mode)
+    response=$(claude -p "$PROMPT" --model "$MODEL" --output-format json 2>&1)
+fi
 
-    # Check for errors
-    if echo "$response" | grep -q '"error"'; then
-        echo "Error: $(echo "$response" | jq -r '.error.message // .error // "Unknown error"')" >&2
-        exit 1
-    fi
+exit_code=$?
 
-    # Extract and print content
-    echo "$response" | jq -r '.choices[0].message.content // "No response received"'
+# Debug output for response
+if [ "$DEBUG" = true ]; then
+    echo "=== RAW RESPONSE ===" >&2
+    echo "$response" >&2
+    echo >&2
+fi
 
-    # Show metadata
-    ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
-    TOKENS=$(echo "$response" | jq -r '.usage.completion_tokens // 0')
-    PROVIDER=$(echo "$response" | jq -r '.provider // "Unknown"')
-    TPS=$(echo "scale=1; $TOKENS / $ELAPSED" | bc 2>/dev/null || echo "0.0")
+# Check for errors
+if [ $exit_code -ne 0 ]; then
+    echo "Error: Claude CLI failed" >&2
+    echo "$response" >&2
+    exit 1
+fi
 
-    echo
-    echo "[$MODEL via $PROVIDER - ${ELAPSED}s - ${TPS} tok/s]" >&2
+# Extract and print content from JSON response
+content=$(echo "$response" | jq -r '.result // .content // .response // .' 2>/dev/null)
+
+# If jq parsing failed or returned null, just print the raw response
+if [ -z "$content" ] || [ "$content" = "null" ]; then
+    echo "$response"
+else
+    echo "$content"
+fi
+
+# Show metadata
+ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
+INPUT_TOKENS=$(echo "$response" | jq -r '.input_tokens // 0' 2>/dev/null)
+OUTPUT_TOKENS=$(echo "$response" | jq -r '.output_tokens // 0' 2>/dev/null)
+
+echo
+if [ "$INPUT_TOKENS" != "0" ] && [ "$OUTPUT_TOKENS" != "0" ]; then
+    TPS=$(echo "scale=1; $OUTPUT_TOKENS / $ELAPSED" | bc 2>/dev/null || echo "0.0")
+    echo "[$MODEL - ${ELAPSED}s - ${OUTPUT_TOKENS} tokens - ${TPS} tok/s]" >&2
+else
+    echo "[$MODEL - ${ELAPSED}s]" >&2
 fi
