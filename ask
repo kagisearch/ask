@@ -32,6 +32,7 @@ SYSTEM_PROMPT=""
 PROMPT=""
 NO_SYSTEM=false
 DEBUG=false
+WITH_CONTEXT=false
 
 # Default system prompt (direct answers)
 DEFAULT_PROMPT="You are a direct answer engine. Output ONLY the requested information.
@@ -62,14 +63,28 @@ Options:
   -m MODEL    Use custom Claude model
   -r          Disable system prompt (raw model behavior)
   --system    Set custom system prompt for the conversation
+  --context   Pipe stdin as context, combine with prompt argument
   --debug     Show system context, prompts, and command (output to stderr)
   --help      Show this help message
 
 Examples:
+  # Basic usage
   ask "Write a hello world in Python"
   ask -o "Explain quantum computing"
   ask -h "What is 2+2?"
+
+  # Pipe input as prompt
   echo "Fix this code" | ask
+
+  # Claude can run commands (recommended for git diffs)
+  ask "Look at git diff and write a commit message"
+  ask "Run git status and summarize changes"
+
+  # Pipe context with --context flag (alternative)
+  git diff | ask --context "Write a commit message for this diff"
+  cat error.log | ask --context "Explain what caused this error"
+
+  # Other options
   ask --system "You are a pirate" "Tell me about sailing"
   ask -r "Tell me a joke"
   ask --debug "Show me debug output"
@@ -215,6 +230,9 @@ while [ $# -gt 0 ]; do
         --debug)
             DEBUG=true
             shift ;;
+        --context)
+            WITH_CONTEXT=true
+            shift ;;
         -[soh])
             MODEL="$(get_model "${1:1}")"
             shift ;;
@@ -233,10 +251,29 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# If no prompt provided as argument, read from stdin
-if [ -z "$PROMPT" ]; then
+# Handle stdin and prompt
+if [ "$WITH_CONTEXT" = true ]; then
+    # --context mode: read stdin as context, combine with prompt
+    if [ ! -t 0 ]; then
+        STDIN_CONTENT=$(cat)
+        if [ -z "$PROMPT" ]; then
+            echo "Error: --context requires both stdin and a prompt argument" >&2
+            exit 1
+        fi
+        # Combine stdin content with prompt
+        PROMPT="${STDIN_CONTENT}
+
+---
+
+${PROMPT}"
+    else
+        echo "Error: --context requires stdin input. Use: command | ask --context \"prompt\"" >&2
+        exit 1
+    fi
+elif [ -z "$PROMPT" ]; then
+    # No prompt argument: read from stdin
     if [ -t 0 ]; then
-        echo "Error: No prompt provided. Use 'ask -h' for help." >&2
+        echo "Error: No prompt provided. Use 'ask --help' for help." >&2
         exit 1
     fi
     # Read all stdin, preserving multi-line format
