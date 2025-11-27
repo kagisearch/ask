@@ -33,6 +33,7 @@ PROMPT=""
 NO_SYSTEM=false
 DEBUG=false
 WITH_CONTEXT=false
+SHOW_STATS=false
 
 # Default system prompt (direct answers)
 DEFAULT_PROMPT="You are a direct answer engine. Output ONLY the requested information.
@@ -64,6 +65,7 @@ Options:
   -r          Disable system prompt (raw model behavior)
   --system    Set custom system prompt for the conversation
   --context   Pipe stdin as context, combine with prompt argument
+  --stats     Show statistics (time, tool calls, tokens, cost)
   --debug     Show system context, prompts, and command (output to stderr)
   --help      Show this help message
 
@@ -83,6 +85,10 @@ Examples:
   # Pipe context with --context flag (alternative)
   git diff | ask --context "Write a commit message for this diff"
   cat error.log | ask --context "Explain what caused this error"
+
+  # Show stats to see tool usage and cost
+  ask --stats "Run git status and summarize changes"
+  # Output: [sonnet - 8.23s - 1 tool calls - 142 tokens - \$0.0145]
 
   # Other options
   ask --system "You are a pirate" "Tell me about sailing"
@@ -230,6 +236,9 @@ while [ $# -gt 0 ]; do
         --debug)
             DEBUG=true
             shift ;;
+        --stats)
+            SHOW_STATS=true
+            shift ;;
         --context)
             WITH_CONTEXT=true
             shift ;;
@@ -371,15 +380,44 @@ else
     echo "$content"
 fi
 
-# Show metadata
-ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
-INPUT_TOKENS=$(echo "$response" | jq -r '.input_tokens // 0' 2>/dev/null)
-OUTPUT_TOKENS=$(echo "$response" | jq -r '.output_tokens // 0' 2>/dev/null)
+# Show metadata (only if --stats enabled)
+if [ "$SHOW_STATS" = true ]; then
+    # ANSI color codes
+    GRAY='\033[90m'
+    BLUE='\033[94m'
+    GREEN='\033[92m'
+    YELLOW='\033[93m'
+    RESET='\033[0m'
 
-echo
-if [ "$INPUT_TOKENS" != "0" ] && [ "$OUTPUT_TOKENS" != "0" ]; then
-    TPS=$(echo "scale=1; $OUTPUT_TOKENS / $ELAPSED" | bc 2>/dev/null || echo "0.0")
-    echo "[$MODEL - ${ELAPSED}s - ${OUTPUT_TOKENS} tokens - ${TPS} tok/s]" >&2
-else
-    echo "[$MODEL - ${ELAPSED}s]" >&2
+    ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
+    INPUT_TOKENS=$(echo "$response" | jq -r '.usage.input_tokens // .input_tokens // 0' 2>/dev/null)
+    OUTPUT_TOKENS=$(echo "$response" | jq -r '.usage.output_tokens // .output_tokens // 0' 2>/dev/null)
+    NUM_TURNS=$(echo "$response" | jq -r '.num_turns // 0' 2>/dev/null)
+    COST=$(echo "$response" | jq -r '.total_cost_usd // 0' 2>/dev/null)
+
+    echo >&2
+    # Build metadata string with colors
+    metadata="${GRAY}[${BLUE}${MODEL}${GRAY} - ${GREEN}${ELAPSED}s${RESET}"
+
+    # Calculate tool calls (turns - 1)
+    if [ "$NUM_TURNS" != "0" ] && [ "$NUM_TURNS" != "null" ]; then
+        TOOL_CALLS=$((NUM_TURNS - 1))
+        metadata="$metadata${GRAY} - ${YELLOW}${TOOL_CALLS} tool calls${RESET}"
+    fi
+
+    # Add tokens and cost/tps if available
+    if [ "$OUTPUT_TOKENS" != "0" ] && [ "$OUTPUT_TOKENS" != "null" ]; then
+        metadata="$metadata${GRAY} - ${RESET}${OUTPUT_TOKENS} tokens"
+
+        # Show cost if available (rounded to 4 decimal places), otherwise show tok/s
+        if [ "$COST" != "0" ] && [ "$COST" != "null" ]; then
+            ROUNDED_COST=$(printf "%.4f" "$COST")
+            metadata="$metadata${GRAY} - ${GREEN}\$${ROUNDED_COST}${RESET}"
+        else
+            TPS=$(echo "scale=1; $OUTPUT_TOKENS / $ELAPSED" | bc 2>/dev/null || echo "0.0")
+            metadata="$metadata${GRAY} - ${GREEN}${TPS} tok/s${RESET}"
+        fi
+    fi
+
+    echo -e "$metadata${GRAY}]${RESET}" >&2
 fi
