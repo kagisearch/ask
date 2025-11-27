@@ -34,6 +34,9 @@ NO_SYSTEM=false
 DEBUG=false
 WITH_CONTEXT=false
 SHOW_STATS=false
+ALLOW_EDITS=true  # Enable file edits by default
+PERMISSION_MODE=""
+ALLOWED_TOOLS=""
 
 # Default system prompt (direct answers)
 DEFAULT_PROMPT="You are a direct answer engine. Output ONLY the requested information.
@@ -58,16 +61,21 @@ ask - Query Claude AI via Claude Code CLI
 Usage: ask [OPTIONS] [PROMPT]
 
 Options:
-  -s          Use Claude Sonnet (default)
-  -o          Use Claude Opus
-  -h          Use Claude Haiku
-  -m MODEL    Use custom Claude model
-  -r          Disable system prompt (raw model behavior)
-  --system    Set custom system prompt for the conversation
-  --context   Pipe stdin as context, combine with prompt argument
-  --stats     Show statistics (time, tool calls, tokens, cost)
-  --debug     Show system context, prompts, and command (output to stderr)
-  --help      Show this help message
+  -s               Use Claude Sonnet (default)
+  -o               Use Claude Opus
+  -h               Use Claude Haiku
+  -m MODEL         Use custom Claude model
+  -r               Disable system prompt (raw model behavior)
+  --system TEXT    Set custom system prompt for the conversation
+  --context        Pipe stdin as context, combine with prompt argument
+  --no-edits       Disable file editing (enabled by default)
+  --permission-mode MODE    Set permission mode (e.g., acceptEdits)
+  --allowed-tools TOOLS     Comma-separated list of allowed tools
+  --stats          Show statistics (time, tool calls, tokens, cost)
+  --debug          Show system context, prompts, and command (stderr)
+  --help           Show this help message
+
+Note: File editing is enabled by default in the current working directory.
 
 Examples:
   # Basic usage
@@ -81,6 +89,11 @@ Examples:
   # Claude can run commands (recommended for git diffs)
   ask "Look at git diff and write a commit message"
   ask "Run git status and summarize changes"
+
+  # File editing (enabled by default)
+  ask "Read README.md and update it with current features"
+  ask "Fix the bug in server.js"
+  ask --no-edits "Just analyze server.js, don't modify it"
 
   # Pipe context with --context flag (alternative)
   git diff | ask --context "Write a commit message for this diff"
@@ -242,6 +255,18 @@ while [ $# -gt 0 ]; do
         --context)
             WITH_CONTEXT=true
             shift ;;
+        --allow-edits)
+            ALLOW_EDITS=true
+            shift ;;
+        --no-edits)
+            ALLOW_EDITS=false
+            shift ;;
+        --permission-mode)
+            PERMISSION_MODE="${2:?Error: --permission-mode requires a value}"
+            shift 2 ;;
+        --allowed-tools)
+            ALLOWED_TOOLS="${2:?Error: --allowed-tools requires a value}"
+            shift 2 ;;
         -[soh])
             MODEL="$(get_model "${1:1}")"
             shift ;;
@@ -287,6 +312,13 @@ elif [ -z "$PROMPT" ]; then
     fi
     # Read all stdin, preserving multi-line format
     PROMPT=$(cat)
+else
+    # Prompt provided: warn if stdin is being ignored
+    if [ ! -t 0 ]; then
+        echo "Warning: stdin detected but will be ignored. Use --context to include it." >&2
+        # Consume stdin to prevent it from being passed to claude
+        cat > /dev/null
+    fi
 fi
 
 # Gather system context (unless in raw mode)
@@ -310,6 +342,23 @@ fi
 # Record start time
 START_TIME=$(date +%s.%N)
 
+# Build Claude CLI command with optional flags
+CLAUDE_ARGS="-p \"$PROMPT\" --model \"$MODEL\""
+
+# Add system prompt if provided
+[ -n "$SYSTEM_PROMPT" ] && CLAUDE_ARGS="$CLAUDE_ARGS --system-prompt \"$SYSTEM_PROMPT\""
+
+# Add permission flags
+if [ "$ALLOW_EDITS" = true ]; then
+    CLAUDE_ARGS="$CLAUDE_ARGS --permission-mode acceptEdits"
+fi
+
+[ -n "$PERMISSION_MODE" ] && CLAUDE_ARGS="$CLAUDE_ARGS --permission-mode \"$PERMISSION_MODE\""
+[ -n "$ALLOWED_TOOLS" ] && CLAUDE_ARGS="$CLAUDE_ARGS --allowedTools \"$ALLOWED_TOOLS\""
+
+# Always request JSON output
+CLAUDE_ARGS="$CLAUDE_ARGS --output-format json"
+
 # Debug output
 if [ "$DEBUG" = true ]; then
     echo "=== SYSTEM CONTEXT ===" >&2
@@ -332,28 +381,16 @@ if [ "$DEBUG" = true ]; then
     echo "$PROMPT" >&2
     echo >&2
 
-    # Build debug command string
-    debug_cmd="claude -p \"<PROMPT>\" --model \"$MODEL\""
-    [ -n "$SYSTEM_PROMPT" ] && debug_cmd="$debug_cmd --system-prompt \"<SYSTEM_PROMPT>\""
-    debug_cmd="$debug_cmd --output-format json"
-
     echo "=== CLAUDE COMMAND ===" >&2
-    echo "$debug_cmd" >&2
+    echo "claude $CLAUDE_ARGS" | sed 's/"[^"]*"/"<...>"/g' >&2
     echo >&2
 fi
 
 # Add newline before answer
 echo
 
-# Execute Claude CLI with proper argument passing
-if [ -n "$SYSTEM_PROMPT" ]; then
-    # With custom system prompt
-    response=$(claude -p "$PROMPT" --model "$MODEL" --system-prompt "$SYSTEM_PROMPT" --output-format json 2>&1)
-else
-    # Without system prompt (raw mode)
-    response=$(claude -p "$PROMPT" --model "$MODEL" --output-format json 2>&1)
-fi
-
+# Execute Claude CLI
+response=$(eval claude $CLAUDE_ARGS 2>&1)
 exit_code=$?
 
 # Debug output for response
@@ -371,14 +408,32 @@ if [ $exit_code -ne 0 ]; then
 fi
 
 # Extract and print content from JSON response
-content=$(echo "$response" | jq -r '.result // .content // .response // .' 2>/dev/null)
+content=$(echo "$response" | jq -r '.result // empty' 2>/dev/null)
 
-# If jq parsing failed or returned null, just print the raw response
-if [ -z "$content" ] || [ "$content" = "null" ]; then
-    echo "$response"
-else
-    echo "$content"
+# Check if result is empty or if there were permission denials
+if [ -z "$content" ]; then
+    # Check for permission denials
+    denials=$(echo "$response" | jq -r '.permission_denials // [] | length' 2>/dev/null)
+    if [ "$denials" != "0" ] && [ "$denials" != "null" ]; then
+        echo "Error: Claude tried to perform an action but was denied permission." >&2
+        echo "" >&2
+        echo "Denied actions:" >&2
+        echo "$response" | jq -r '.permission_denials[] | "  - \(.tool_name)"' 2>/dev/null >&2
+        echo "" >&2
+        echo "This may happen if:" >&2
+        echo "  1. File is outside current working directory" >&2
+        echo "  2. Insufficient file system permissions" >&2
+        echo "  3. Run: claude (interactive mode) for more control" >&2
+        exit 1
+    else
+        # No content and no denials - unexpected
+        echo "Error: No response content received" >&2
+        [ "$DEBUG" = true ] && echo "$response" >&2
+        exit 1
+    fi
 fi
+
+echo "$content"
 
 # Show metadata (only if --stats enabled)
 if [ "$SHOW_STATS" = true ]; then
