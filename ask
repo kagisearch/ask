@@ -15,17 +15,17 @@ fi
 get_model() {
     case "$1" in
         c) echo "inception/mercury-coder:nitro" ;;
-        g) echo "google/gemini-2.5-flash-preview-09-2025:nitro" ;;
-        s) echo "anthropic/claude-sonnet-4.5:nitro" ;;
-        x) echo "x-ai/grok-code-fast-1:nitro" ;;
-        k) echo "moonshotai/kimi-k2:nitro" ;;
-        q) echo "qwen/qwen3-235b-a22b-2507:nitro" ;;
-        o) echo "openai/gpt-5:nitro" ;;
+        g) echo "google/gemini-3-flash-preview:nitro" ;;
+        s) echo "anthropic/claude-sonnet-4.6:nitro" ;;
+        x) echo "x-ai/grok-4-fast:nitro" ;;
+        d) echo "deepseek/deepseek-v3.2:nitro" ;;
+        q) echo "qwen/qwen3-235b-a22b-07-25:nitro" ;;
+        o) echo "openai/gpt-5.2:nitro" ;;
     esac
 }
 
 # Default values
-MODEL="qwen/qwen3-235b-a22b-2507:nitro"
+MODEL="anthropic/claude-sonnet-4.6:nitro"
 SYSTEM_PROMPT=""
 PROMPT=""
 STREAMING=false
@@ -56,12 +56,12 @@ Usage: ask [OPTIONS] [PROMPT]
 
 Options:
   -c          Use inception/mercury-coder
-  -g          Use google/gemini-2.5-flash-preview-09-2025
-  -s          Use anthropic/claude-sonnet-4.5
-  -x          Use x-ai/grok-code-fast-1
-  -k          Use moonshotai/kimi-k2
-  -q          Use qwen/qwen3-235b-a22b-2507 (default)
-  -o          Use openai/gpt-5
+  -g          Use google/gemini-3-flash-preview
+  -s          Use anthropic/claude-sonnet-4.6 (default)
+  -x          Use x-ai/grok-4-fast
+  -d          Use deepseek/deepseek-v3.2
+  -q          Use qwen/qwen3-235b-a22b-07-25
+  -o          Use openai/gpt-5.2
   -m MODEL    Use custom model
   -r          Disable system prompt (raw model behavior)
   --stream    Enable streaming output
@@ -84,7 +84,7 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help) show_help ;;
-        -[cgskqxo])
+        -[cgsdqxo])
             MODEL="$(get_model "${1:1}")"
             shift ;;
         -m)
