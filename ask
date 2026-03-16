@@ -5,11 +5,9 @@
 
 set -euo pipefail
 
-# Check for API key
-if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-    echo "Error: OPENROUTER_API_KEY environment variable is not set" >&2
-    exit 1
-fi
+SERVICE="openrouter"
+API_KEY=""
+PROVIDER_NAME=""
 
 # Model shortcuts function
 get_model() {
@@ -67,6 +65,8 @@ Options:
   --stream    Enable streaming output
   --system    Set system prompt for the conversation
   --provider  Comma-separated list of providers for routing
+  --poe       Use Poe API endpoint
+  --longcat   Use Longcat API endpoint
   -h, --help  Show this help message
 
 Examples:
@@ -100,8 +100,18 @@ while [ $# -gt 0 ]; do
             SYSTEM_PROMPT="${2:?Error: --system requires a prompt}"
             shift 2 ;;
         --provider)
+            if [ "$SERVICE" != "openrouter" ]; then
+                echo "Warning: --provider is only supported for OpenRouter" >&2
+            fi
             PROVIDER_ORDER="${2:?Error: --provider requires providers}"
             shift 2 ;;
+        --poe)
+            SERVICE="poe"
+            shift ;;
+        --longcat)
+            SERVICE="longcat"
+            MODEL="LongCat-Flash-Chat"
+            shift ;;
         *)
             PROMPT="$*"
             break ;;
@@ -116,6 +126,24 @@ if [ -z "$PROMPT" ]; then
     fi
     # Read all stdin, preserving multi-line format
     PROMPT=$(cat)
+fi
+
+# Check for API key and set API URL based on service
+if [ "$SERVICE" = "openrouter" ]; then
+    API_KEY="${OPENROUTER_API_KEY:?}"
+    PROVIDER_NAME="OpenRouter"
+    API_URL="https://openrouter.ai/api/v1/chat/completions"
+elif [ "$SERVICE" = "poe" ]; then
+    API_KEY="${POE_API_KEY:?}"
+    PROVIDER_NAME="Poe"
+    API_URL="https://api.poe.com/v1/chat/completions"
+elif [ "$SERVICE" = "longcat" ]; then
+    API_KEY="${LONGCAT_API_KEY:?}" || exit
+    PROVIDER_NAME="Longcat"
+    API_URL="https://api.longcat.chat/openai/v1/chat/completions"
+else
+    echo "Error: Unknown service $SERVICE" >&2
+    exit 1
 fi
 
 # Apply default system prompt unless disabled or custom prompt provided
@@ -133,19 +161,18 @@ fi
 # Record start time
 START_TIME=$(date +%s.%N)
 
-# Build JSON payload once
+# Build JSON payload - provider order only for OpenRouter
 PROVIDER_JSON=""
-if [ -n "$PROVIDER_ORDER" ]; then
+if [ "$SERVICE" = "openrouter" ] && [ -n "$PROVIDER_ORDER" ]; then
     PROVIDER_JSON=',"provider":{"order":['$(echo "$PROVIDER_ORDER" | awk -F, '{for(i=1;i<=NF;i++) printf "\"%s\"%s", $i, (i<NF?",":"")}')']}'
 fi
 
+# Build JSON payload
 JSON_PAYLOAD='{
     "model": "'"$MODEL"'",
     "messages": '"$MESSAGES"',
     "stream": '$([ "$STREAMING" = true ] && echo true || echo false)"$PROVIDER_JSON"'
 }'
-
-API_URL="https://openrouter.ai/api/v1/chat/completions"
 
 # Add newline before answer
 echo
@@ -155,7 +182,7 @@ if [ "$STREAMING" = true ]; then
     # Streaming mode
     curl -sS "$API_URL" \
       -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+      -H "Authorization: Bearer $API_KEY" \
       -d "$JSON_PAYLOAD" 2>&1 | while IFS= read -r line; do
         # Check for errors
         if echo "$line" | grep -q '"error"'; then
@@ -177,12 +204,12 @@ if [ "$STREAMING" = true ]; then
     # Show metadata
     ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
     echo
-    echo "[$MODEL - ${ELAPSED}s]" >&2
+    echo "[$MODEL via $PROVIDER_NAME - ${ELAPSED}s]" >&2
 else
     # Non-streaming mode
     response=$(curl -sS "$API_URL" \
       -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+      -H "Authorization: Bearer $API_KEY" \
       -d "$JSON_PAYLOAD" 2>&1)
 
     # Check for errors
@@ -197,8 +224,16 @@ else
     # Show metadata
     ELAPSED=$(printf "%.2f" $(echo "$(date +%s.%N) - $START_TIME" | bc))
     TOKENS=$(echo "$response" | jq -r '.usage.completion_tokens // 0')
-    PROVIDER=$(echo "$response" | jq -r '.provider // "Unknown"')
-    TPS=$(echo "scale=1; $TOKENS / $ELAPSED" | bc 2>/dev/null || echo "0.0")
+    if [ "$SERVICE" = "openrouter" ]; then
+        PROVIDER=$(echo "$response" | jq -r '.provider // "OpenRouter"')
+    else
+        PROVIDER="$PROVIDER_NAME"
+    fi
+    if [ "$ELAPSED" = "0.00" ]; then
+        TPS="0.0"
+    else
+        TPS=$(echo "scale=1; $TOKENS / $ELAPSED" | bc 2>/dev/null || echo "0.0")
+    fi
 
     echo
     echo "[$MODEL via $PROVIDER - ${ELAPSED}s - ${TPS} tok/s]" >&2
